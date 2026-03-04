@@ -151,7 +151,7 @@ def main():
     """, unsafe_allow_html=True)
 
     st.title("🍱 點餐與差假交叉比對工具")
-    st.markdown("上傳當月點餐系統與差假紀錄檔案，系統將自動比對出**「請假期間卻有訂餐」**的異常名單。")
+    st.markdown("上傳當月點餐系統與差假紀錄檔案，系統將自動比對出**「請假期間卻有訂餐」**的名單。")
 
     # --- 側邊欄：參數設定 ---
     with st.sidebar:
@@ -267,5 +267,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
