@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 # 常數設定區 (移除 MEAL_PRICES，改為動態傳入)
 # ==========================================
 MEAL_CHECKPOINTS = {'早': 7, '中': 12, '晚': 17}
-TARGET_SHEETS = [f"{i}組" for i in range(1, 10)] +["日照"]
+TARGET_SHEETS =[f"{i}組" for i in range(1, 10)] + ["日照"]
 
 # ==========================================
 # 核心邏輯函式
@@ -22,7 +22,9 @@ def parse_minguo_datetime(dt_str):
         if len(nums) >= 5:
             year = int(nums[0]) + 1911
             return datetime(year, int(nums[1]), int(nums[2]), int(nums[3]), int(nums[4]))
-    except: pass
+    except Exception as e:
+        # BLUEPRINT RULE 1: Never silently ignore exceptions
+        st.warning(f"⚠️ 解析民國日期字串發生錯誤 ({dt_str}): {e}")
     return None
 
 def parse_duration_to_days(duration_str):
@@ -35,7 +37,7 @@ def parse_duration_to_days(duration_str):
     if hour_match: days += float(hour_match.group(1)) / 8.0
     return days
 
-def get_leave_lookup_table(leave_files, target_month, min_leave_days):
+def get_leave_lookup_table(leave_files, target_year, target_month, min_leave_days):
     """解析請假資料"""
     leave_set = set()
     
@@ -46,9 +48,13 @@ def get_leave_lookup_table(leave_files, target_month, min_leave_days):
         try:
             try: 
                 df = pd.read_excel(f_file)
-            except: 
+            except Exception as e_default: 
+                # BLUEPRINT RULE 1: Always catch explicit exception & raise if critical
                 f_file.seek(0) 
-                df = pd.read_excel(f_file, engine='xlrd')
+                try:
+                    df = pd.read_excel(f_file, engine='xlrd')
+                except Exception as e_xlrd:
+                    raise ValueError(f"無法解析 Excel 檔案 ({f_file.name})\n預設引擎錯誤: {e_default}\nxlrd引擎錯誤: {e_xlrd}")
 
             for _, row in df.iterrows():
                 if parse_duration_to_days(row.get('共計', '')) < min_leave_days: 
@@ -63,14 +69,15 @@ def get_leave_lookup_table(leave_files, target_month, min_leave_days):
 
                 curr_date = start_dt.date()
                 while curr_date <= end_dt.date():
-                    if curr_date.month == target_month:
+                    # BLUEPRINT RULE 2: Enforce Year + Month Validation (Temporal Integrity Rule)
+                    if curr_date.year == target_year and curr_date.month == target_month:
                         for m_name, hour in MEAL_CHECKPOINTS.items():
                             check_time = datetime(curr_date.year, curr_date.month, curr_date.day, hour, 0)
                             if start_dt <= check_time < end_dt:
                                 leave_set.add((name, curr_date.day, m_name))
                     curr_date += timedelta(days=1)
         except Exception as e:
-            st.warning(f"⚠️ 讀取請假檔失敗 ({f_file.name}): {e}")
+            st.warning(f"⚠️ 讀取或處理請假檔失敗 ({f_file.name}): {e}")
             
     return leave_set
 
@@ -82,39 +89,55 @@ def get_meal_price(meal_str: str, meal_prices: dict) -> int:
 
 def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
     """比對點餐表"""
-    if not meal_file: return []
+    if not meal_file: return[]
     results =[]
     
-    excel = pd.ExcelFile(meal_file)
+    try:
+        excel = pd.ExcelFile(meal_file)
+    except Exception as e:
+        st.error(f"⚠️ 無法讀取點餐系統檔案: {e}")
+        return[]
 
     for sheet in TARGET_SHEETS:
         if sheet not in excel.sheet_names: continue
         
-        df = pd.read_excel(meal_file, sheet_name=sheet, header=2)
-        df['姓名'] = df['姓名'].replace('nan', None).ffill()
-        df.columns = [str(c).strip() for c in df.columns]
+        try:
+            df = pd.read_excel(meal_file, sheet_name=sheet, header=2)
+            df.columns =[str(c).strip() for c in df.columns]
 
-        for _, row in df.iterrows():
-            name = str(row.get('姓名', '')).strip()
-            raw_meal = str(row.get('餐別', '')).strip()
-            if not name or name == 'nan' or not raw_meal: continue
-            
-            meal_key = raw_meal[0]
-            for day in range(1, 32):
-                day_col = str(day)
-                if day_col in df.columns:
-                    val = str(row[day_col]).upper().strip()
-                    if val in ['V', 'N']:
-                        if (name, day, meal_key) in leave_lookup:
-                            results.append({
-                                "組別": sheet,
-                                "姓名": name,
-                                "日期": f"{target_month}月{day}日",
-                                "餐別": raw_meal,
-                                "費用": get_meal_price(raw_meal, meal_prices), # 動態費用
-                                "狀態": val,
-                                "異常說明": "請假期間仍有訂餐"
-                            })
+            # BLUEPRINT RULE 3: Enforce Required Column Validation (Schema Guard Rule)
+            REQUIRED_COLUMNS = {"姓名", "餐別"}
+            missing = REQUIRED_COLUMNS - set(df.columns)
+            if missing:
+                st.warning(f"⚠️ 工作表 '{sheet}' 缺少必要欄位: {missing}，已自動略過該表。")
+                continue
+
+            df['姓名'] = df['姓名'].replace('nan', None).ffill()
+
+            for _, row in df.iterrows():
+                name = str(row.get('姓名', '')).strip()
+                raw_meal = str(row.get('餐別', '')).strip()
+                if not name or name == 'nan' or not raw_meal: continue
+                
+                meal_key = raw_meal[0]
+                for day in range(1, 32):
+                    day_col = str(day)
+                    if day_col in df.columns:
+                        val = str(row[day_col]).upper().strip()
+                        if val in['V', 'N']:
+                            if (name, day, meal_key) in leave_lookup:
+                                results.append({
+                                    "組別": sheet,
+                                    "姓名": name,
+                                    "日期": f"{target_month}月{day}日",
+                                    "餐別": raw_meal,
+                                    "費用": get_meal_price(raw_meal, meal_prices), # 動態費用
+                                    "狀態": val,
+                                    "異常說明": "請假期間仍有訂餐"
+                                })
+        except Exception as e:
+            st.warning(f"⚠️ 處理工作表 '{sheet}' 時發生錯誤: {e}")
+
     return results
 
 # ==========================================
@@ -227,8 +250,9 @@ def main():
             return
 
         with st.spinner("系統比對中，請稍候..."):
-            # 1. 取得請假名單表
+            # 1. 取得請假名單表 (配合 Rule 2，傳入目標西元年以校驗防呆)
             leave_lookup = get_leave_lookup_table([leave_h1, leave_h2], 
+                target_year=ad_year,
                 target_month=target_month, 
                 min_leave_days=min_leave_days
             )
@@ -283,6 +307,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
