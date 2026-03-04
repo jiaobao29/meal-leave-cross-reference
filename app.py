@@ -125,18 +125,15 @@ def main():
     
     # --- 自動計算「上個月」的年月值 ---
     today = datetime.now()
-    # 取得本月 1 號，再減去 1 天，就會變成「上個月的最後一天」
     first_day_of_current_month = today.replace(day=1)
     last_day_of_last_month = first_day_of_current_month - timedelta(days=1)
     
     default_year_minguo = last_day_of_last_month.year - 1911
     default_month = last_day_of_last_month.month
-    # ---------------------------------------
     
-    # --- 注入 Custom CSS 改變按鈕顏色為 #FF9800 ---
+    # --- 注入 Custom CSS ---
     st.markdown("""
     <style>
-    /* 改變 primary 按鈕與下載按鈕的顏色 */
     button[kind="primary"] {
         background-color: #FF9800 !important;
         border-color: #FF9800 !important;
@@ -144,15 +141,34 @@ def main():
         font-weight: bold !important;
     }
     button[kind="primary"]:hover {
-        background-color: #F57C00 !important; /* 滑鼠游標經過時稍微變暗 */
+        background-color: #F57C00 !important;
         border-color: #F57C00 !important;
+    }
+    /* 調整操作說明文字的大小與間距 */
+    .instruction-box {
+        background-color: #f8f9fa;
+        padding: 12px 18px;
+        border-radius: 8px;
+        border-left: 5px solid #FF9800;
+        margin-bottom: 20px;
+        font-size: 0.95rem;
+        color: #444;
+        line-height: 1.6;
     }
     </style>
     """, unsafe_allow_html=True)
 
     st.title("🍱 點餐與差假交叉比對工具")
-    st.markdown("上傳當月點餐系統與差假紀錄檔案，系統將自動比對出**「請假期間卻有訂餐」**的名單。")
 
+    # --- 新增的操作說明區塊 ---
+    st.markdown("""
+    <div class="instruction-box">
+        <b>💡 操作說明：</b><br>
+        1. <b>左側設定</b>：確認年月（預設為上個月）與餐點費用。<br>
+        2. <b>上傳檔案</b>：於右側分別上傳「點餐檔」與「差假記錄檔」。<br>
+        3. <b>開始比對</b>：點擊下方橘色按鈕，結果將自動顯示並提供 Excel 下載。
+    </div>
+    """, unsafe_allow_html=True)
     # --- 側邊欄：參數設定 ---
     with st.sidebar:
         st.header("⚙️ 差假參數設定")
@@ -267,3 +283,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
