@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 # 常數設定區 (移除 MEAL_PRICES，改為動態傳入)
 # ==========================================
 MEAL_CHECKPOINTS = {'早': 7, '中': 12, '晚': 17}
-TARGET_SHEETS =[f"{i}組" for i in range(1, 10)] + ["日照"]
+TARGET_SHEETS =[f"{i}組" for i in range(1, 10)] +["日照"]
 
 # ==========================================
 # 核心邏輯函式
@@ -24,6 +24,7 @@ def parse_minguo_datetime(dt_str):
         # BLUEPRINT RULE 1: Structural Guard Before Regex
         if len(nums) < 5:
             st.warning(f"⚠️ 日期欄位格式不符 (需含年/月/日/時/分，實際解析到 {len(nums)} 個數字): '{dt_str}'，已略過此筆。")
+            st.session_state['has_warning'] = True  # 標記發生警告
             return None
             
         if len(nums) >= 5:
@@ -32,6 +33,7 @@ def parse_minguo_datetime(dt_str):
     except Exception as e:
         # Never silently ignore exceptions
         st.warning(f"⚠️ 解析民國日期字串發生錯誤 ({dt_str}): {e}")
+        st.session_state['has_warning'] = True
     return None
 
 def parse_duration_to_days(duration_str):
@@ -67,6 +69,7 @@ def get_leave_lookup_table(leave_files, target_year, target_month, min_leave_day
             missing_cols = LEAVE_REQUIRED_COLS - set(df.columns)
             if missing_cols:
                 st.warning(f"⚠️ 差假檔 '{f_file.name}' 缺少必要欄位: {missing_cols}，已略過此檔案。")
+                st.session_state['has_warning'] = True  # 標記發生警告
                 continue  # skip this file entirely — fail fast at the file level
 
             for _, row in df.iterrows():
@@ -95,6 +98,7 @@ def get_leave_lookup_table(leave_files, target_year, target_month, min_leave_day
                     curr_date += timedelta(days=1)
         except Exception as e:
             st.warning(f"⚠️ 讀取或處理請假檔失敗 ({f_file.name}): {e}")
+            st.session_state['has_warning'] = True
             
     return leave_set
 
@@ -113,6 +117,7 @@ def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
         excel = pd.ExcelFile(meal_file)
     except Exception as e:
         st.error(f"⚠️ 無法讀取點餐系統檔案: {e}")
+        st.session_state['has_warning'] = True
         return[]
 
     for sheet in TARGET_SHEETS:
@@ -126,12 +131,14 @@ def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
             missing = REQUIRED_COLUMNS - set(df.columns)
             if missing:
                 st.warning(f"⚠️ 工作表 '{sheet}' 缺少必要欄位: {missing}，已自動略過該表。")
+                st.session_state['has_warning'] = True
                 continue
 
             # BLUEPRINT RULE 4: Day-Column Integer Validation
             day_cols_found =[str(d) for d in range(1, 32) if str(d) in df.columns]
             if not day_cols_found:
                 st.warning(f"⚠️ 工作表 '{sheet}' 中找不到任何日期欄 (1–31)，請確認欄位標題格式，已略過該表。")
+                st.session_state['has_warning'] = True
                 continue
 
             df['姓名'] = df['姓名'].replace('nan', None).ffill()
@@ -163,6 +170,7 @@ def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
                                 })
         except Exception as e:
             st.warning(f"⚠️ 處理工作表 '{sheet}' 時發生錯誤: {e}")
+            st.session_state['has_warning'] = True
 
     return results
 
@@ -268,6 +276,9 @@ def main():
     # 按鈕設定為 primary，CSS 樣式會自動將其變為橘色
     if st.button("🚀 開始交叉比對", type="primary", use_container_width=True):
         
+        # 每次按下按鈕時，重置警告標記為 False
+        st.session_state['has_warning'] = False
+        
         if not meal_file:
             st.error("❌ 請務必上傳「點餐系統」檔案！")
             return
@@ -276,7 +287,7 @@ def main():
             return
 
         # BLUEPRINT RULE 6: File Size Guard Before Processing (Fail-Fast at UI Level)
-        MAX_FILE_SIZE_MB = 20
+        MAX_FILE_SIZE_MB = 100
         for label, f in[("點餐檔", meal_file), ("上半月差假", leave_h1), ("下半月差假", leave_h2)]:
             if f and f.size > MAX_FILE_SIZE_MB * 1024 * 1024:
                 st.error(f"❌ 檔案「{label}」({f.name}) 超過 {MAX_FILE_SIZE_MB}MB 上限，請確認後重新上傳。")
@@ -335,8 +346,12 @@ def main():
                     type="primary"
                 )
             else:
-                st.success("✨ 掃描完成，未發現任何異常資料！")
-                st.balloons()
+                # 針對使用者的反饋進行修正：檢查是否有被標記過任何警告
+                if st.session_state.get('has_warning', False):
+                    st.info("ℹ️ 掃描結束。因發生上述警告（如檔案格式有誤或略過工作表），部分資料未能完整比對。請修正錯誤後重新執行。")
+                else:
+                    st.success("✨ 掃描完成，未發現任何異常資料！")
+                    st.balloons()
 
 if __name__ == "__main__":
     main()
