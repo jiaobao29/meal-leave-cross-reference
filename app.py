@@ -123,6 +123,16 @@ def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
 def main():
     st.set_page_config(page_title="點餐與差假比對系統", page_icon="🍱", layout="wide")
     
+    # --- 自動計算「上個月」的年月值 ---
+    today = datetime.now()
+    # 取得本月 1 號，再減去 1 天，就會變成「上個月的最後一天」
+    first_day_of_current_month = today.replace(day=1)
+    last_day_of_last_month = first_day_of_current_month - timedelta(days=1)
+    
+    default_year_minguo = last_day_of_last_month.year - 1911
+    default_month = last_day_of_last_month.month
+    # ---------------------------------------
+    
     # --- 注入 Custom CSS 改變按鈕顏色為 #FF9800 ---
     st.markdown("""
     <style>
@@ -145,9 +155,17 @@ def main():
 
     # --- 側邊欄：參數設定 ---
     with st.sidebar:
-        st.header("⚙️ 參數設定")
-        target_year_minguo = st.number_input("目標民國年份", min_value=100, max_value=200, value=115, step=1)
-        target_month = st.number_input("目標月份", min_value=1, max_value=12, value=2, step=1)
+        st.header("⚙️ 差假參數設定")
+        
+        # 使用我們計算出來的 default_year_minguo 和 default_month
+        target_year_minguo = st.number_input(
+            "目標民國年份", min_value=100, max_value=200, 
+            value=default_year_minguo, step=1
+        )
+        target_month = st.number_input(
+            "目標月份", min_value=1, max_value=12, 
+            value=default_month, step=1
+        )
         min_leave_days = st.number_input("異常門檻 (請假大於幾天)", min_value=0.0, max_value=30.0, value=1.0, step=0.5)
         
         ad_year = target_year_minguo + 1911
@@ -249,4 +267,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
