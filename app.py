@@ -145,7 +145,7 @@ def main():
 
     # --- 側邊欄：參數設定 ---
     with st.sidebar:
-        st.header("⚙️ 差假參數設定")
+        st.header("⚙️ 參數設定")
         target_year_minguo = st.number_input("目標民國年份", min_value=100, max_value=200, value=115, step=1)
         target_month = st.number_input("目標月份", min_value=1, max_value=12, value=2, step=1)
         min_leave_days = st.number_input("異常門檻 (請假大於幾天)", min_value=0.0, max_value=30.0, value=1.0, step=0.5)
@@ -249,3 +249,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
