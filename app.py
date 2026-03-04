@@ -6,6 +6,12 @@ import io
 from datetime import datetime, timedelta
 
 # ==========================================
+# 常數設定區 (移除 MEAL_PRICES，改為動態傳入)
+# ==========================================
+MEAL_CHECKPOINTS = {'早': 7, '中': 12, '晚': 17}
+TARGET_SHEETS = [f"{i}組" for i in range(1, 10)] +["日照"]
+
+# ==========================================
 # 核心邏輯函式
 # ==========================================
 def parse_minguo_datetime(dt_str):
@@ -31,11 +37,12 @@ def parse_duration_to_days(duration_str):
 
 def get_leave_lookup_table(leave_files, target_month, min_leave_days):
     """解析請假資料"""
-    MEAL_CHECKPOINTS = {'早': 7, '中': 12, '晚': 17}
     leave_set = set()
     
     for f_file in leave_files:
-        if f_file is None: continue
+        if f_file is None: 
+            continue
+            
         try:
             try: 
                 df = pd.read_excel(f_file)
@@ -51,7 +58,8 @@ def get_leave_lookup_table(leave_files, target_month, min_leave_days):
                 start_dt = parse_minguo_datetime(row.get('差假開始日期', ''))
                 end_dt = parse_minguo_datetime(row.get('差假結束日期', ''))
                 
-                if not start_dt or not end_dt: continue
+                if not start_dt or not end_dt: 
+                    continue
 
                 curr_date = start_dt.date()
                 while curr_date <= end_dt.date():
@@ -63,17 +71,25 @@ def get_leave_lookup_table(leave_files, target_month, min_leave_days):
                     curr_date += timedelta(days=1)
         except Exception as e:
             st.warning(f"⚠️ 讀取請假檔失敗 ({f_file.name}): {e}")
+            
     return leave_set
+
+def get_meal_price(meal_str: str, meal_prices: dict) -> int:
+    """依餐別字串首字取得對應費用 (動態接收費用設定)"""
+    if not meal_str: return 0
+    meal_key = meal_str.strip()[0] 
+    return meal_prices.get(meal_key, 0)
 
 def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
     """比對點餐表"""
-    TARGET_SHEETS = [f"{i}組" for i in range(1, 10)] + ["日照"]
     if not meal_file: return []
-    results = []
+    results =[]
+    
     excel = pd.ExcelFile(meal_file)
 
     for sheet in TARGET_SHEETS:
         if sheet not in excel.sheet_names: continue
+        
         df = pd.read_excel(meal_file, sheet_name=sheet, header=2)
         df['姓名'] = df['姓名'].replace('nan', None).ffill()
         df.columns = [str(c).strip() for c in df.columns]
@@ -91,9 +107,13 @@ def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
                     if val in ['V', 'N']:
                         if (name, day, meal_key) in leave_lookup:
                             results.append({
-                                "組別": sheet, "姓名": name, "日期": f"{target_month}月{day}日",
-                                "餐別": raw_meal, "費用": meal_prices.get(meal_key, 0),
-                                "狀態": val, "異常說明": "請假期間仍有訂餐"
+                                "組別": sheet,
+                                "姓名": name,
+                                "日期": f"{target_month}月{day}日",
+                                "餐別": raw_meal,
+                                "費用": get_meal_price(raw_meal, meal_prices), # 動態費用
+                                "狀態": val,
+                                "異常說明": "請假期間仍有訂餐"
                             })
     return results
 
@@ -103,90 +123,147 @@ def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
 def main():
     st.set_page_config(page_title="點餐與差假比對系統", page_icon="🍱", layout="wide")
     
-    # --- 注入 Custom CSS ---
+    # --- 自動計算「上個月」的年月值 ---
+    today = datetime.now()
+    # 取得本月 1 號，再減去 1 天，就會變成「上個月的最後一天」
+    first_day_of_current_month = today.replace(day=1)
+    last_day_of_last_month = first_day_of_current_month - timedelta(days=1)
+    
+    default_year_minguo = last_day_of_last_month.year - 1911
+    default_month = last_day_of_last_month.month
+    # ---------------------------------------
+    
+    # --- 注入 Custom CSS 改變按鈕顏色為 #FF9800 ---
     st.markdown("""
     <style>
+    /* 改變 primary 按鈕與下載按鈕的顏色 */
     button[kind="primary"] {
         background-color: #FF9800 !important;
         border-color: #FF9800 !important;
         color: white !important;
         font-weight: bold !important;
-        height: 3em !important;
-        font-size: 1.2rem !important;
+    }
+    button[kind="primary"]:hover {
+        background-color: #F57C00 !important; /* 滑鼠游標經過時稍微變暗 */
+        border-color: #F57C00 !important;
     }
     </style>
     """, unsafe_allow_html=True)
 
-    st.title("🍱 點餐與差假交叉比對系統")
+    st.title("🍱 點餐與差假交叉比對工具")
+    st.markdown("上傳當月點餐系統與差假紀錄檔案，系統將自動比對出**「請假期間卻有訂餐」**的名單。")
 
-    # --- 操作說明 (精簡版) ---
-    st.info("""**📖 操作說明**
-1. **左側設定**：確認年月（預設為上個月）與餐點費用。
-2. **上傳檔案**：於右側分別上傳點餐檔與差假記錄檔。
-3. **開始比對**：點擊下方橘色按鈕，比對結果將自動顯示並提供下載。""")
-
-    # --- 參數計算 ---
-    today = datetime.now()
-    last_month_end = today.replace(day=1) - timedelta(days=1)
-    
-    # --- 側邊欄：左側設定 ---
+    # --- 側邊欄：參數設定 ---
     with st.sidebar:
-        st.header("⚙️ 1. 左側設定")
-        target_year_minguo = st.number_input("目標民國年份", 100, 200, last_month_end.year-1911)
-        target_month = st.number_input("目標月份", 1, 12, last_month_end.month)
-        min_leave_days = st.number_input("異常門檻 (請假大於幾天)", 0.0, 30.0, 1.0, 0.5)
+        st.header("⚙️ 差假參數設定")
+        
+        # 使用我們計算出來的 default_year_minguo 和 default_month
+        target_year_minguo = st.number_input(
+            "目標民國年份", min_value=100, max_value=200, 
+            value=default_year_minguo, step=1
+        )
+        target_month = st.number_input(
+            "目標月份", min_value=1, max_value=12, 
+            value=default_month, step=1
+        )
+        min_leave_days = st.number_input("異常門檻 (請假大於幾天)", min_value=0.0, max_value=30.0, value=1.0, step=0.5)
+        
+        ad_year = target_year_minguo + 1911
+        _, days_in_month = calendar.monthrange(ad_year, target_month)
+        st.info(f"📅 目前設定：西元 {ad_year} 年 {target_month} 月\n\n當月天數：{days_in_month} 天")
         
         st.divider()
-        st.subheader("💰 餐點費用設定")
-        p_b = st.number_input("早餐費用", 0, 200, 40)
-        p_l = st.number_input("中餐費用", 0, 200, 75)
-        p_d = st.number_input("晚餐費用", 0, 200, 65)
-        meal_prices = {'早': p_b, '中': p_l, '晚': p_d}
+        
+        st.header("💰 餐點費用設定 (元)")
+        price_breakfast = st.number_input("早 餐 費 用", min_value=0, value=40, step=5)
+        price_lunch = st.number_input("中 餐 費 用", min_value=0, value=75, step=5)
+        price_dinner = st.number_input("晚 餐 費 用", min_value=0, value=65, step=5)
+        
+        # 封裝成字典供後續使用
+        meal_prices = {'早': price_breakfast, '中': price_lunch, '晚': price_dinner}
 
-    # --- 主畫面：右側上傳 ---
-    st.subheader("📁 2. 上傳檔案")
+    # --- 主畫面：檔案上傳區 ---
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("**點餐系統檔案 (.xlsx)**")
-        meal_file = st.file_uploader("上傳點餐檔", type=['xlsx', 'xlsm'], label_visibility="collapsed")
+        st.subheader("1️⃣ 上傳點餐系統檔案")
+        # 利用 Markdown 的 h5 讓字體變大，並隱藏原本 uploader 的 label
+        st.markdown("##### 📁 請上傳點餐系統 Excel (.xlsx, .xlsm)")
+        meal_file = st.file_uploader("", type=['xlsx', 'xlsm'], key="meal", label_visibility="collapsed")
 
     with col2:
-        st.markdown("**差假紀錄檔案 (可多選或分開上傳)**")
-        leave_h1 = st.file_uploader("上傳差假檔1", type=['xls', 'xlsx'], label_visibility="collapsed")
-        leave_h2 = st.file_uploader("上傳差假檔2", type=['xls', 'xlsx'], label_visibility="collapsed")
+        st.subheader("2️⃣ 上傳差假紀錄檔案")
+        st.markdown("##### 📁 請上傳上半月差假紀錄 (.xls, .xlsx)")
+        leave_h1 = st.file_uploader("", type=['xls', 'xlsx'], key="h1", label_visibility="collapsed")
+        
+        st.markdown("##### 📁 請上傳下半月差假紀錄 (.xls, .xlsx)")
+        leave_h2 = st.file_uploader("", type=['xls', 'xlsx'], key="h2", label_visibility="collapsed")
 
-    # --- 執行按鈕 ---
+    # --- 執行按鈕與結果處理 ---
     st.divider()
-    if st.button("🚀 3. 開始交叉比對", type="primary", use_container_width=True):
-        if not meal_file or (not leave_h1 and not leave_h2):
-            st.error("❌ 請確認已上傳點餐檔與至少一份差假紀錄檔！")
+    # 按鈕設定為 primary，CSS 樣式會自動將其變為橘色
+    if st.button("🚀 開始交叉比對", type="primary", use_container_width=True):
+        
+        if not meal_file:
+            st.error("❌ 請務必上傳「點餐系統」檔案！")
+            return
+        if not leave_h1 and not leave_h2:
+            st.error("❌ 請至少上傳一份「差假紀錄」檔案 (上半月或下半月)！")
             return
 
-        with st.spinner("系統比對中..."):
-            leave_lookup = get_leave_lookup_table([leave_h1, leave_h2], target_month, min_leave_days)
-            mismatch = process_comparison(meal_file, leave_lookup, target_month, meal_prices)
+        with st.spinner("系統比對中，請稍候..."):
+            # 1. 取得請假名單表
+            leave_lookup = get_leave_lookup_table([leave_h1, leave_h2], 
+                target_month=target_month, 
+                min_leave_days=min_leave_days
+            )
             
-            if mismatch:
-                df = pd.DataFrame(mismatch)
-                # 排序
-                df['d_rank'] = df['日期'].map(lambda x: int(re.search(r'月(\d+)日', x).group(1)))
-                df = df.sort_values(['組別', 'd_rank', '姓名']).drop(columns=['d_rank'])
+            # 2. 比對點餐資料 (傳入動態設定的 meal_prices)
+            mismatch_data = process_comparison(
+                meal_file, 
+                leave_lookup, 
+                target_month=target_month,
+                meal_prices=meal_prices
+            )
+            
+            # 3. 產出結果
+            if mismatch_data:
+                df_final = pd.DataFrame(mismatch_data)
                 
-                st.success(f"✅ 比對完成！偵測到 {len(df)} 筆異常。")
-                st.warning(f"💰 異常餐點總計：{df['費用'].sum()} 元")
-                st.dataframe(df, use_container_width=True)
+                # 排序邏輯
+                meal_order = {'早': 1, '中': 2, '晚': 3}
+                df_final['rank'] = df_final['餐別'].str[0].map(lambda x: meal_order.get(x, 9))
+                df_final['組別_rank'] = df_final['組別'].map(
+                    lambda x: (0, int(re.search(r'\d+', x).group())) if re.search(r'\d+', x) else (1, 0)
+                )
+                df_final['日期_rank'] = df_final['日期'].map(
+                    lambda x: int(re.search(r'月(\d+)日', x).group(1)) if re.search(r'月(\d+)日', x) else 0
+                )
+                df_final = df_final.sort_values(by=['組別_rank', '日期_rank', '姓名', 'rank']).drop(columns=['rank', '組別_rank', '日期_rank'])
                 
-                # 下載按鈕
-                buf = io.BytesIO()
-                with pd.ExcelWriter(buf, engine='openpyxl') as writer:
-                    df.to_excel(writer, index=False)
-                st.download_button("📥 下載比對結果 Excel", buf.getvalue(), 
-                                 f"比對結果_{target_year_minguo}年{target_month}月.xlsx",
-                                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                 type="primary")
+                total_cost = df_final['費用'].sum()
+                
+                st.success(f"✅ 比對完成！偵測到 **{len(df_final)}** 筆異常。")
+                st.warning(f"💰 異常餐點總計費用：**{total_cost}** 元")
+                
+                # 在網頁顯示結果
+                st.dataframe(df_final, use_container_width=True)
+                
+                # 製作 Excel 下載按鈕
+                output_buffer = io.BytesIO()
+                with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
+                    df_final.to_excel(writer, index=False)
+                
+                # 此按鈕同樣套用 primary，會變成橘色
+                st.download_button(
+                    label="📥 下載比對結果 Excel",
+                    data=output_buffer.getvalue(),
+                    file_name=f"比對結果_{target_year_minguo}年{target_month}月.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary"
+                )
             else:
-                st.success("✨ 未發現任何異常資料！")
+                st.success("✨ 掃描完成，未發現任何異常資料！")
+                st.balloons()
 
 if __name__ == "__main__":
     main()
-
