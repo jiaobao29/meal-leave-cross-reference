@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 # ==========================================
 # 常數設定區 (移除 MEAL_PRICES，改為動態傳入)
 # ==========================================
-MEAL_CHECKPOINTS = {'早': 8, '中': 12, '晚': 17}
+MEAL_CHECKPOINTS = {'早': 7, '中': 12, '晚': 17}
 TARGET_SHEETS = [f"{i}組" for i in range(1, 10)] +["日照"]
 
 # ==========================================
@@ -267,6 +267,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
