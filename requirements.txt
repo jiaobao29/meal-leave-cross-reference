@@ -1,9 +1,4 @@
-# Web Framework (2026 Feb 最新穩定版)
 streamlit~=1.54.0
-
-# Data Processing (Pandas 3.0 已經穩定，但需確保 openpyxl 配合)
-pandas~=3.0.1
-
-# Excel 引擎 (這是讀取 Excel 必備，版本需穩定)
+pandas>=2.2.2
 openpyxl~=3.1.5
 xlrd~=2.0.1
