@@ -3,6 +3,7 @@ import pandas as pd
 import re
 import calendar
 import io
+import unicodedata
 from datetime import datetime, timedelta
 
 # ==========================================
@@ -19,11 +20,17 @@ def parse_minguo_datetime(dt_str):
     if pd.isna(dt_str): return None
     try:
         nums = re.findall(r'\d+', str(dt_str))
+        
+        # BLUEPRINT RULE 1: Structural Guard Before Regex
+        if len(nums) < 5:
+            st.warning(f"⚠️ 日期欄位格式不符 (需含年/月/日/時/分，實際解析到 {len(nums)} 個數字): '{dt_str}'，已略過此筆。")
+            return None
+            
         if len(nums) >= 5:
             year = int(nums[0]) + 1911
             return datetime(year, int(nums[1]), int(nums[2]), int(nums[3]), int(nums[4]))
     except Exception as e:
-        # BLUEPRINT RULE 1: Never silently ignore exceptions
+        # Never silently ignore exceptions
         st.warning(f"⚠️ 解析民國日期字串發生錯誤 ({dt_str}): {e}")
     return None
 
@@ -49,18 +56,29 @@ def get_leave_lookup_table(leave_files, target_year, target_month, min_leave_day
             try: 
                 df = pd.read_excel(f_file)
             except Exception as e_default: 
-                # BLUEPRINT RULE 1: Always catch explicit exception & raise if critical
                 f_file.seek(0) 
                 try:
                     df = pd.read_excel(f_file, engine='xlrd')
                 except Exception as e_xlrd:
                     raise ValueError(f"無法解析 Excel 檔案 ({f_file.name})\n預設引擎錯誤: {e_default}\nxlrd引擎錯誤: {e_xlrd}")
 
+            # BLUEPRINT RULE 2: Required Column Guard (Fail-Fast on Schema)
+            LEAVE_REQUIRED_COLS = {"姓名", "共計", "差假開始日期", "差假結束日期"}
+            missing_cols = LEAVE_REQUIRED_COLS - set(df.columns)
+            if missing_cols:
+                st.warning(f"⚠️ 差假檔 '{f_file.name}' 缺少必要欄位: {missing_cols}，已略過此檔案。")
+                continue  # skip this file entirely — fail fast at the file level
+
             for _, row in df.iterrows():
                 if parse_duration_to_days(row.get('共計', '')) < min_leave_days: 
                     continue
                 
                 name = str(row.get('姓名', '')).strip()
+                
+                # BLUEPRINT RULE 3: Value-Level Sentinel Check on Name
+                if not name or name.lower() == 'nan':
+                    continue
+                    
                 start_dt = parse_minguo_datetime(row.get('差假開始日期', ''))
                 end_dt = parse_minguo_datetime(row.get('差假結束日期', ''))
                 
@@ -69,7 +87,6 @@ def get_leave_lookup_table(leave_files, target_year, target_month, min_leave_day
 
                 curr_date = start_dt.date()
                 while curr_date <= end_dt.date():
-                    # BLUEPRINT RULE 2: Enforce Year + Month Validation (Temporal Integrity Rule)
                     if curr_date.year == target_year and curr_date.month == target_month:
                         for m_name, hour in MEAL_CHECKPOINTS.items():
                             check_time = datetime(curr_date.year, curr_date.month, curr_date.day, hour, 0)
@@ -105,11 +122,16 @@ def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
             df = pd.read_excel(meal_file, sheet_name=sheet, header=2)
             df.columns =[str(c).strip() for c in df.columns]
 
-            # BLUEPRINT RULE 3: Enforce Required Column Validation (Schema Guard Rule)
             REQUIRED_COLUMNS = {"姓名", "餐別"}
             missing = REQUIRED_COLUMNS - set(df.columns)
             if missing:
                 st.warning(f"⚠️ 工作表 '{sheet}' 缺少必要欄位: {missing}，已自動略過該表。")
+                continue
+
+            # BLUEPRINT RULE 4: Day-Column Integer Validation
+            day_cols_found =[str(d) for d in range(1, 32) if str(d) in df.columns]
+            if not day_cols_found:
+                st.warning(f"⚠️ 工作表 '{sheet}' 中找不到任何日期欄 (1–31)，請確認欄位標題格式，已略過該表。")
                 continue
 
             df['姓名'] = df['姓名'].replace('nan', None).ffill()
@@ -124,6 +146,10 @@ def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
                     day_col = str(day)
                     if day_col in df.columns:
                         val = str(row[day_col]).upper().strip()
+                        
+                        # BLUEPRINT RULE 5: Cell Value Normalisation Before Comparison
+                        val = unicodedata.normalize('NFKC', val).upper().strip()
+                        
                         if val in['V', 'N']:
                             if (name, day, meal_key) in leave_lookup:
                                 results.append({
@@ -249,8 +275,15 @@ def main():
             st.error("❌ 請至少上傳一份「差假紀錄」檔案 (上半月或下半月)！")
             return
 
+        # BLUEPRINT RULE 6: File Size Guard Before Processing (Fail-Fast at UI Level)
+        MAX_FILE_SIZE_MB = 20
+        for label, f in[("點餐檔", meal_file), ("上半月差假", leave_h1), ("下半月差假", leave_h2)]:
+            if f and f.size > MAX_FILE_SIZE_MB * 1024 * 1024:
+                st.error(f"❌ 檔案「{label}」({f.name}) 超過 {MAX_FILE_SIZE_MB}MB 上限，請確認後重新上傳。")
+                return
+
         with st.spinner("系統比對中，請稍候..."):
-            # 1. 取得請假名單表 (配合 Rule 2，傳入目標西元年以校驗防呆)
+            # 1. 取得請假名單表 
             leave_lookup = get_leave_lookup_table([leave_h1, leave_h2], 
                 target_year=ad_year,
                 target_month=target_month, 
