@@ -171,7 +171,7 @@ def main():
     """, unsafe_allow_html=True)
     # --- 側邊欄：參數設定 ---
     with st.sidebar:
-        st.header("⚙️ 差假參數設定")
+        st.header("⚙️ 參數設定")
         
         # 使用我們計算出來的 default_year_minguo 和 default_month
         target_year_minguo = st.number_input(
@@ -283,4 +283,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
