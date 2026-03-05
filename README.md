@@ -58,4 +58,3 @@ streamlit run app.py
 This project follows a "Concise Logic" pattern. If the Excel layout changes in the future, modify the `TARGET_SHEETS` or `MEAL_CHECKPOINTS` constants in `logic.py`.
 
 ***
-```
