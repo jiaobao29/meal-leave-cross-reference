@@ -1,60 +1,110 @@
 # meal-leave-cross-reference
 將每個月的點餐系統 與 上半月、下半月差假紀錄進行交叉比對 得出 "請假同時又有訂餐的人"
 
-***
+---
 
-# 🍱 Meal-Leave Cross-Reference Tool 
-### (點餐與差假交叉比對系統)
+# 🍱 點餐與差假交叉比對系統 (Meal-Leave Audit Tool)
 
-A lightweight, high-accuracy auditing tool built with **Streamlit** and **Pandas**. This tool automates the tedious process of verifying meal orders against leave records, ensuring that no meal costs are incurred while staff are on leave.
+這是一個基於 **Streamlit** 與 **Pandas** 開發的稽核自動化工具。主要功能是將「點餐系統紀錄」與「差假紀錄」進行交叉比對，自動揪出**員工在請假期間仍然訂餐**的異常項目，並計算溢領/浪費的餐費總額。
 
-## 🌟 Key Features
-- **Smart Cross-Referencing**: Automatically detects if a meal (Breakfast, Lunch, Dinner) was marked as ordered ("V" or "N") during a staff member's leave period.
-- **Minguo Calendar Support**: Native parsing of Taiwan Minguo dates (e.g., `112/10/05 08:00`).
-- **Month-Mismatch Guard**: Built-in safety check to ensure the uploaded leave records actually match the target month selected.
-- **Dynamic Pricing**: Custom meal cost settings (Breakfast/Lunch/Dinner) with real-time total anomaly cost calculation.
-- **Detailed Audit Metrics**: Provides transparency on how many sheets were scanned and how many entries were verified.
-- **Exportable Results**: One-click download of all detected anomalies into a formatted Excel file.
+## 🔄 最新更新 (Refactor Note)
+本專案已進行重構以提升維護性，目前採 **MVC (Model-View-Controller)** 概念分離架構：
+*   **配置與驗證分離**：新增 `schema.py` 集中管理所有 Excel 欄位名稱與驗證邏輯。
+*   **邏輯解耦**：`logic.py` 專注於處理日期解析與資料比對，不再寫死欄位名稱。
 
-## 🛠️ Project Structure
-To maintain high maintainability, the logic is separated from the UI:
-- `app.py`: Streamlit interface, file upload handling, and result rendering.
-- `logic.py`: Core data processing, regex date parsing, and cross-reference algorithms.
+---
 
-## 🚀 Getting Started
+## 📂 專案架構說明
 
-### Prerequisites
-- Python 3.9+
-- The following packages: `streamlit`, `pandas`, `openpyxl`, `xlrd`
+為了方便後續維護與擴充，程式碼結構如下：
 
-### Installation
-1. **Clone or download** this repository to your local machine.
-2. **Install dependencies**:
-   ```bash
-   pip install streamlit pandas openpyxl xlrd
-   ```
+| 檔案名稱 | 用途說明 |
+| :--- | :--- |
+| **`app.py`** | **前端介面 (UI)**：負責 Streamlit 畫面渲染、檔案上傳接收、下載按鈕互動。 |
+| **`logic.py`** | **核心邏輯 (Core)**：包含民國年日期解析、差假區間計算、異常比對演算法。 |
+| **`schema.py`** | **資料定義 (Model)**：**[重要]** 定義 Excel 欄位常數、資料驗證規則。若來源檔案的欄位名稱變更，請修改此檔。 |
 
-### Running the App
-Navigate to the project folder and run:
+---
+
+## 🚀 快速開始
+
+### 1. 環境需求
+*   Python 3.9 或以上版本
+*   必要套件：`streamlit`, `pandas`, `openpyxl`, `xlrd`
+
+### 2. 安裝套件
+請在終端機 (Terminal) 執行：
+```bash
+pip install -r requirements.txt
+```
+
+### 3. 啟動系統
 ```bash
 streamlit run app.py
 ```
+啟動後，瀏覽器將自動開啟操作頁面 (預設為 `http://localhost:8501`)。
 
-## 📖 How to Use
-1. **Configure Settings**: Set the Target Year (Minguo), Target Month, and current Meal Prices in the sidebar.
-2. **Upload Files**:
-   - **Meal File**: The Excel file containing group sheets (e.g., 1組, 2組...日照).
-   - **Leave Records**: Upload the H1 (1st-15th) and H2 (16th-31st) leave Excel files.
-3. **Execute**: Click **"🚀 開始交叉比對"**.
-4. **Review**: Check the anomaly table and the calculated total wasted costs.
-5. **Download**: Export the results to Excel for administrative filing.
+---
 
-## ⚠️ Important Notes
-- **File Schema**: The Leave Record must contain columns: `姓名`, `共計`, `差假開始日期`, `差假結束日期`.
-- **Meal Table Format**: The Meal System file must have the `姓名` and `餐別` columns with daily columns numbered `1` through `31`.
-- **Normalization**: The tool automatically handles full-width/half-width characters and case sensitivity (e.g., `v` vs `V`).
+## 📖 操作流程
 
-## 👨‍💻 Maintainability
-This project follows a "Concise Logic" pattern. If the Excel layout changes in the future, modify the `TARGET_SHEETS` or `MEAL_CHECKPOINTS` constants in `logic.py`.
+1.  **參數設定 (左側邊欄)**：
+    *   設定 **目標年份 (民國)** 與 **月份**。
+    *   設定異常門檻 (例如：請假超過 1 天才列入計算)。
+    *   調整當前的早/中/晚 **餐費金額**。
+2.  **上傳檔案**：
+    *   **點餐檔**：支援 `.xlsx`, `.xlsm`。
+    *   **差假檔**：支援上半月與下半月檔案 (`.xls`, `.xlsx`)。
+3.  **執行比對**：
+    *   點擊 **「🚀 開始交叉比對」**。
+    *   系統會自動檢查檔案格式 (Schema Validation)。
+4.  **下載結果**：
+    *   若發現異常，畫面將顯示清單與總金額，並提供 Excel 下載。
 
-***
+---
+
+## 📋 檔案格式規範 (Schema)
+
+本系統依賴 `schema.py` 中的定義進行驗證。上傳的 Excel 必須包含以下欄位，否則系統會報錯並拒絕處理。
+
+### 1. 差假紀錄檔 (Leave Records)
+*   **必要欄位**：
+    *   `姓名`
+    *   `共計` (例如：1日4時)
+    *   `差假開始日期` (格式：112/01/01 08:00)
+    *   `差假結束日期`
+*   **說明**：支援民國年格式，系統會自動轉換。
+
+### 2. 點餐系統檔 (Meal Records)
+*   **必要工作表 (Sheets)**：預設掃描 `1組` 到 `9組` 以及 `日照` (可於 `logic.py` 中修改 `TARGET_SHEETS`)。
+*   **必要欄位**：
+    *   `姓名`
+    *   `餐別` (內容需包含：早餐/午餐/晚餐)
+    *   **日期欄位**：需包含 `1` 到 `31` 的數字欄位。
+*   **有效標記**：
+    *   資料格內填寫 `V` 或 `N` (不分大小寫) 視為有訂餐。
+
+---
+
+## ⚙️ 開發者維護指南
+
+### 如果 Excel 欄位名稱改變了？
+不需要修改複雜的邏輯程式碼。請直接開啟 **`schema.py`**，修改對應的常數即可：
+```python
+# schema.py 範例
+COL_LEAVE_NAME = "新的姓名欄位名稱"
+COL_LEAVE_START = "請假開始時間"
+```
+
+### 如果需要增加掃描的工作表 (Sheet)？
+請修改 **`logic.py`** 中的 `TARGET_SHEETS` 變數：
+```python
+# logic.py
+TARGET_SHEETS = [f"{i}組" for i in range(1, 15)] + ["新部門"]
+```
+
+---
+
+## 📝 版本資訊
+*   **v1.0**: 初始版本。
+*   **v1.1 (Current)**: Refactor 架構，引入 `schema.py` 進行資料驗證與定義分離，提升穩定性。
