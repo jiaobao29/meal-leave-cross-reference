@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 # 常數設定區 (移除 MEAL_PRICES，改為動態傳入)
 # ==========================================
 MEAL_CHECKPOINTS = {'早': 7, '中': 12, '晚': 17}
-TARGET_SHEETS =[f"{i}組" for i in range(1, 10)] +["日照"]
+TARGET_SHEETS =[f"{i}組" for i in range(1, 10)] + ["日照"]
 
 # ==========================================
 # 核心邏輯函式
@@ -49,6 +49,9 @@ def parse_duration_to_days(duration_str):
 def get_leave_lookup_table(leave_files, target_year, target_month, min_leave_days):
     """解析請假資料"""
     leave_set = set()
+    # BLUEPRINT V2 STEP 1: Track Metrics & Detect Months
+    parsed_leave_count = 0
+    found_months = set()
     
     for f_file in leave_files:
         if f_file is None: 
@@ -90,17 +93,22 @@ def get_leave_lookup_table(leave_files, target_year, target_month, min_leave_day
 
                 curr_date = start_dt.date()
                 while curr_date <= end_dt.date():
+                    # Blueprint V2: Collect all unique months present in the file
+                    found_months.add(curr_date.month)
+                    
                     if curr_date.year == target_year and curr_date.month == target_month:
                         for m_name, hour in MEAL_CHECKPOINTS.items():
                             check_time = datetime(curr_date.year, curr_date.month, curr_date.day, hour, 0)
                             if start_dt <= check_time < end_dt:
                                 leave_set.add((name, curr_date.day, m_name))
+                                parsed_leave_count += 1 # Blueprint V2: Tracking count
                     curr_date += timedelta(days=1)
         except Exception as e:
             st.warning(f"⚠️ 讀取或處理請假檔失敗 ({f_file.name}): {e}")
             st.session_state['has_warning'] = True
             
-    return leave_set
+    # Blueprint V2: Return changes
+    return leave_set, parsed_leave_count, found_months
 
 def get_meal_price(meal_str: str, meal_prices: dict) -> int:
     """依餐別字串首字取得對應費用 (動態接收費用設定)"""
@@ -110,7 +118,10 @@ def get_meal_price(meal_str: str, meal_prices: dict) -> int:
 
 def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
     """比對點餐表"""
-    if not meal_file: return[]
+    # BLUEPRINT V2 STEP 2: Add Tracking Metrics
+    metrics = {'processed_sheets': 0, 'checked_meal_entries': 0}
+    if not meal_file: return [], metrics
+    
     results =[]
     
     try:
@@ -118,7 +129,7 @@ def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
     except Exception as e:
         st.error(f"⚠️ 無法讀取點餐系統檔案: {e}")
         st.session_state['has_warning'] = True
-        return[]
+        return[], metrics
 
     for sheet in TARGET_SHEETS:
         if sheet not in excel.sheet_names: continue
@@ -140,6 +151,9 @@ def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
                 st.warning(f"⚠️ 工作表 '{sheet}' 中找不到任何日期欄 (1–31)，請確認欄位標題格式，已略過該表。")
                 st.session_state['has_warning'] = True
                 continue
+                
+            # Blueprint V2: Valid sheet counted
+            metrics['processed_sheets'] += 1
 
             df['姓名'] = df['姓名'].replace('nan', None).ffill()
 
@@ -157,7 +171,10 @@ def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
                         # BLUEPRINT RULE 5: Cell Value Normalisation Before Comparison
                         val = unicodedata.normalize('NFKC', val).upper().strip()
                         
-                        if val in['V', 'N']:
+                        if val in ['V', 'N']:
+                            # Blueprint V2: Checked meal entries counted
+                            metrics['checked_meal_entries'] += 1
+                            
                             if (name, day, meal_key) in leave_lookup:
                                 results.append({
                                     "組別": sheet,
@@ -172,7 +189,7 @@ def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
             st.warning(f"⚠️ 處理工作表 '{sheet}' 時發生錯誤: {e}")
             st.session_state['has_warning'] = True
 
-    return results
+    return results, metrics
 
 # ==========================================
 # Streamlit UI 介面設計
@@ -226,11 +243,11 @@ def main():
         3. <b>開始比對</b>：點擊下方橘色按鈕，結果將自動顯示並提供 Excel 下載。
     </div>
     """, unsafe_allow_html=True)
+    
     # --- 側邊欄：參數設定 ---
     with st.sidebar:
         st.header("⚙️ 參數設定")
         
-        # 使用我們計算出來的 default_year_minguo 和 default_month
         target_year_minguo = st.number_input(
             "目標民國年份", min_value=100, max_value=200, 
             value=default_year_minguo, step=1
@@ -259,7 +276,6 @@ def main():
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("1️⃣ 上傳點餐系統檔案")
-        # 利用 Markdown 的 h5 讓字體變大，並隱藏原本 uploader 的 label
         st.markdown("##### 📁 請上傳點餐系統 Excel (.xlsx, .xlsm)")
         meal_file = st.file_uploader("", type=['xlsx', 'xlsm'], key="meal", label_visibility="collapsed")
 
@@ -273,10 +289,8 @@ def main():
 
     # --- 執行按鈕與結果處理 ---
     st.divider()
-    # 按鈕設定為 primary，CSS 樣式會自動將其變為橘色
     if st.button("🚀 開始交叉比對", type="primary", use_container_width=True):
         
-        # 每次按下按鈕時，重置警告標記為 False
         st.session_state['has_warning'] = False
         
         if not meal_file:
@@ -286,72 +300,91 @@ def main():
             st.error("❌ 請至少上傳一份「差假紀錄」檔案 (上半月或下半月)！")
             return
 
-        # BLUEPRINT RULE 6: File Size Guard Before Processing (Fail-Fast at UI Level)
+        # BLUEPRINT RULE 6: File Size Guard Before Processing
         MAX_FILE_SIZE_MB = 100
         for label, f in[("點餐檔", meal_file), ("上半月差假", leave_h1), ("下半月差假", leave_h2)]:
             if f and f.size > MAX_FILE_SIZE_MB * 1024 * 1024:
                 st.error(f"❌ 檔案「{label}」({f.name}) 超過 {MAX_FILE_SIZE_MB}MB 上限，請確認後重新上傳。")
                 return
 
-        with st.spinner("系統比對中，請稍候..."):
-            # 1. 取得請假名單表 
-            leave_lookup = get_leave_lookup_table([leave_h1, leave_h2], 
+        # BLUEPRINT V2 STEP 3: Replace st.spinner with st.status & Add Month-Mismatch Guard
+        with st.status("🔍 開始執行交叉比對作業...", expanded=True) as status:
+            st.write("📂 正在讀取並解析差假資料...")
+            # 1. 取得請假名單表
+            leave_lookup, leave_count, found_months = get_leave_lookup_table(
+                [leave_h1, leave_h2], 
                 target_year=ad_year,
                 target_month=target_month, 
                 min_leave_days=min_leave_days
             )
             
-            # 2. 比對點餐資料 (傳入動態設定的 meal_prices)
-            mismatch_data = process_comparison(
+            # Crucial Guard: 檢查設定月份與檔案中包含的月份是否相符
+            if found_months and target_month not in found_months:
+                st.warning(f"🚨 **月份不一致警告**：您設定要比對 {target_month} 月，但差假檔案內實際包含的月份為 {sorted(list(found_months))} 月！這可能導致比對結果不準確。")
+                st.session_state['has_warning'] = True
+                
+            st.write(f"✅ 成功載入 {leave_count} 筆符合 {target_month} 月的差假紀錄")
+            
+            st.write("🍱 正在讀取並比對點餐資料...")
+            # 2. 比對點餐資料
+            mismatch_data, scan_metrics = process_comparison(
                 meal_file, 
                 leave_lookup, 
                 target_month=target_month,
                 meal_prices=meal_prices
             )
             
-            # 3. 產出結果
-            if mismatch_data:
-                df_final = pd.DataFrame(mismatch_data)
-                
-                # 排序邏輯
-                meal_order = {'早': 1, '中': 2, '晚': 3}
-                df_final['rank'] = df_final['餐別'].str[0].map(lambda x: meal_order.get(x, 9))
-                df_final['組別_rank'] = df_final['組別'].map(
-                    lambda x: (0, int(re.search(r'\d+', x).group())) if re.search(r'\d+', x) else (1, 0)
-                )
-                df_final['日期_rank'] = df_final['日期'].map(
-                    lambda x: int(re.search(r'月(\d+)日', x).group(1)) if re.search(r'月(\d+)日', x) else 0
-                )
-                df_final = df_final.sort_values(by=['組別_rank', '日期_rank', '姓名', 'rank']).drop(columns=['rank', '組別_rank', '日期_rank'])
-                
-                total_cost = df_final['費用'].sum()
-                
-                st.success(f"✅ 比對完成！偵測到 **{len(df_final)}** 筆異常。")
-                st.warning(f"💰 異常餐點總計費用：**{total_cost}** 元")
-                
-                # 在網頁顯示結果
-                st.dataframe(df_final, use_container_width=True)
-                
-                # 製作 Excel 下載按鈕
-                output_buffer = io.BytesIO()
-                with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
-                    df_final.to_excel(writer, index=False)
-                
-                # 此按鈕同樣套用 primary，會變成橘色
-                st.download_button(
-                    label="📥 下載比對結果 Excel",
-                    data=output_buffer.getvalue(),
-                    file_name=f"比對結果_{target_year_minguo}年{target_month}月.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary"
-                )
+            st.write(f"✅ 共讀取 {scan_metrics['processed_sheets']} 個工作表，掃描 {scan_metrics['checked_meal_entries']} 筆點餐紀錄")
+            status.update(label="比對作業完成！", state="complete", expanded=False)
+            
+        # BLUEPRINT V2 STEP 4: Enhance the Final Output Logic
+        if mismatch_data:
+            df_final = pd.DataFrame(mismatch_data)
+            
+            # 排序邏輯
+            meal_order = {'早': 1, '中': 2, '晚': 3}
+            df_final['rank'] = df_final['餐別'].str[0].map(lambda x: meal_order.get(x, 9))
+            df_final['組別_rank'] = df_final['組別'].map(
+                lambda x: (0, int(re.search(r'\d+', x).group())) if re.search(r'\d+', x) else (1, 0)
+            )
+            df_final['日期_rank'] = df_final['日期'].map(
+                lambda x: int(re.search(r'月(\d+)日', x).group(1)) if re.search(r'月(\d+)日', x) else 0
+            )
+            df_final = df_final.sort_values(by=['組別_rank', '日期_rank', '姓名', 'rank']).drop(columns=['rank', '組別_rank', '日期_rank'])
+            
+            total_cost = df_final['費用'].sum()
+            
+            st.success(f"✅ 比對完成！偵測到 **{len(df_final)}** 筆異常。")
+            st.warning(f"💰 異常餐點總計費用：**{total_cost}** 元")
+            
+            st.dataframe(df_final, use_container_width=True)
+            
+            output_buffer = io.BytesIO()
+            with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
+                df_final.to_excel(writer, index=False)
+            
+            st.download_button(
+                label="📥 下載比對結果 Excel",
+                data=output_buffer.getvalue(),
+                file_name=f"比對結果_{target_year_minguo}年{target_month}月.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary"
+            )
+        else:
+            # Empty Data Guards & True Success Conditions
+            if scan_metrics['checked_meal_entries'] == 0:
+                st.error("⚠️ 掃描完成，但**未能找到任何有效的點餐紀錄 (V/N)**！請確認點餐檔案是否為空白。")
+            elif leave_count == 0 and not (found_months and target_month not in found_months):
+                # 只有在沒有觸發上方的強烈月份警告時，才提示此訊息
+                st.warning(f"⚠️ 掃描完成，但**未載入任何 {target_month} 月的有效差假紀錄**。若該月確實無人請假請忽略此訊息，否則請檢查檔案。")
+            elif scan_metrics['checked_meal_entries'] > 0 and leave_count > 0:
+                st.success(f"✨ 掃描完成！本次共深入檢查了 **{scan_metrics['processed_sheets']}** 個工作表、**{scan_metrics['checked_meal_entries']}** 筆點餐紀錄，未發現任何異常狀況！")
+                st.balloons()
+            elif st.session_state.get('has_warning', False):
+                st.info("ℹ️ 掃描結束。因發生上述警告（如檔案格式有誤或略過工作表），部分資料未能完整比對。請修正錯誤後重新執行。")
             else:
-                # 針對使用者的反饋進行修正：檢查是否有被標記過任何警告
-                if st.session_state.get('has_warning', False):
-                    st.info("ℹ️ 掃描結束。因發生上述警告（如檔案格式有誤或略過工作表），部分資料未能完整比對。請修正錯誤後重新執行。")
-                else:
-                    st.success("✨ 掃描完成，未發現任何異常資料！")
-                    st.balloons()
+                st.success("✨ 掃描完成，未發現任何異常資料！")
+                st.balloons()
 
 if __name__ == "__main__":
     main()
