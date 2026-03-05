@@ -5,10 +5,19 @@ import unicodedata
 from datetime import datetime, timedelta
 
 # ==========================================
+# 引入 Schema 與驗證邏輯
+# ==========================================
+from schema import (
+    COL_LEAVE_NAME, COL_LEAVE_TOTAL, COL_LEAVE_START, COL_LEAVE_END,
+    COL_MEAL_NAME, COL_MEAL_TYPE, VALID_MEAL_MARKS,
+    validate_leave_schema, validate_meal_schema, validate_meal_days
+)
+
+# ==========================================
 # 常數設定區
 # ==========================================
 MEAL_CHECKPOINTS = {'早': 7, '中': 12, '晚': 17}
-TARGET_SHEETS = [f"{i}組" for i in range(1, 10)] + ["日照"]
+TARGET_SHEETS =[f"{i}組" for i in range(1, 10)] + ["日照"]
 
 # ==========================================
 # 工具函式
@@ -69,21 +78,22 @@ def get_leave_lookup_table(leave_files, target_year, target_month, min_leave_day
                 except Exception as e_xlrd:
                     raise ValueError(f"無法解析 Excel ({f_file.name})\n預設: {e_default}\nxlrd: {e_xlrd}")
 
-            LEAVE_REQUIRED_COLS = {"姓名", "共計", "差假開始日期", "差假結束日期"}
-            missing_cols = LEAVE_REQUIRED_COLS - set(df.columns)
-            if missing_cols:
+            # 呼叫獨立出的驗證邏輯
+            is_valid, missing_cols = validate_leave_schema(df.columns)
+            if not is_valid:
                 st.warning(f"⚠️ 差假檔 '{f_file.name}' 缺少必要欄位: {missing_cols}，已略過此檔案。")
                 st.session_state['has_warning'] = True
                 continue
 
             for _, row in df.iterrows():
-                if parse_duration_to_days(row.get('共計', '')) < min_leave_days: continue
+                # 替換為 Schema 中定義的常數
+                if parse_duration_to_days(row.get(COL_LEAVE_TOTAL, '')) < min_leave_days: continue
                 
-                name = str(row.get('姓名', '')).strip()
+                name = str(row.get(COL_LEAVE_NAME, '')).strip()
                 if not name or name.lower() == 'nan': continue
                     
-                start_dt = parse_minguo_datetime(row.get('差假開始日期', ''))
-                end_dt = parse_minguo_datetime(row.get('差假結束日期', ''))
+                start_dt = parse_minguo_datetime(row.get(COL_LEAVE_START, ''))
+                end_dt = parse_minguo_datetime(row.get(COL_LEAVE_END, ''))
                 if not start_dt or not end_dt: continue
 
                 curr_date = start_dt.date()
@@ -105,7 +115,7 @@ def get_leave_lookup_table(leave_files, target_year, target_month, min_leave_day
 def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
     """比對點餐表並產出異常清單"""
     metrics = {'processed_sheets': 0, 'checked_meal_entries': 0}
-    if not meal_file: return [], metrics
+    if not meal_file: return[], metrics
     
     results =[]
     try:
@@ -122,23 +132,27 @@ def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
             df = pd.read_excel(meal_file, sheet_name=sheet, header=2)
             df.columns = [str(c).strip() for c in df.columns]
 
-            if {"姓名", "餐別"} - set(df.columns):
+            # 驗證點餐檔案必要欄位 ("姓名", "餐別")
+            is_valid, missing_cols = validate_meal_schema(df.columns)
+            if not is_valid:
                 st.warning(f"⚠️ 工作表 '{sheet}' 缺少必要欄位，已略過該表。")
                 st.session_state['has_warning'] = True
                 continue
 
-            day_cols_found =[str(d) for d in range(1, 32) if str(d) in df.columns]
-            if not day_cols_found:
+            # 驗證是否包含日期欄位 (1-31)
+            has_days, day_cols_found = validate_meal_days(df.columns)
+            if not has_days:
                 st.warning(f"⚠️ 工作表 '{sheet}' 找不到日期欄(1–31)，已略過該表。")
                 st.session_state['has_warning'] = True
                 continue
                 
             metrics['processed_sheets'] += 1
-            df['姓名'] = df['姓名'].replace('nan', None).ffill()
+            # 替換為 Schema 中定義的常數
+            df[COL_MEAL_NAME] = df[COL_MEAL_NAME].replace('nan', None).ffill()
 
             for _, row in df.iterrows():
-                name = str(row.get('姓名', '')).strip()
-                raw_meal = str(row.get('餐別', '')).strip()
+                name = str(row.get(COL_MEAL_NAME, '')).strip()
+                raw_meal = str(row.get(COL_MEAL_TYPE, '')).strip()
                 if not name or name == 'nan' or not raw_meal: continue
                 
                 meal_key = raw_meal[0]
@@ -146,7 +160,8 @@ def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
                     day_col = str(day)
                     if day_col in df.columns:
                         val = unicodedata.normalize('NFKC', str(row[day_col])).upper().strip()
-                        if val in ['V', 'N']:
+                        # 替換為 Schema 中定義的常數
+                        if val in VALID_MEAL_MARKS:
                             metrics['checked_meal_entries'] += 1
                             if (name, day, meal_key) in leave_lookup:
                                 results.append({
