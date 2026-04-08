@@ -81,7 +81,7 @@ def main():
             return
 
         MAX_FILE_SIZE_MB = 100
-        for label, f in[("點餐檔", meal_file), ("上半月差假", leave_h1), ("下半月差假", leave_h2)]:
+        for label, f in [("點餐檔", meal_file), ("上半月差假", leave_h1), ("下半月差假", leave_h2)]:
             if f and f.size > MAX_FILE_SIZE_MB * 1024 * 1024:
                 st.error(f"❌ 檔案「{label}」超過 {MAX_FILE_SIZE_MB}MB 上限，請重新上傳。")
                 return
@@ -89,7 +89,8 @@ def main():
         # 執行掃描 (呼叫 logic.py 中的函式)
         with st.status("🔍 開始執行交叉比對作業...", expanded=True) as status:
             st.write("📂 正在讀取並解析差假資料...")
-            leave_lookup, leave_count, found_months = get_leave_lookup_table([leave_h1, leave_h2], ad_year, target_month, min_leave_days
+            leave_lookup, leave_count, found_months = get_leave_lookup_table(
+                [leave_h1, leave_h2], ad_year, target_month, min_leave_days
             )
             
             if found_months and target_month not in found_months:
@@ -97,12 +98,20 @@ def main():
                 st.session_state['has_warning'] = True
                 
             st.write(f"✅ 成功載入 {leave_count} 筆符合 {target_month} 月的差假紀錄")
-            st.write("🍱 正在讀取並比對點餐資料...")
+            st.write("🍱 正在讀取並比對點餐資料 (動態偵測工作表)...")
             
             mismatch_data, scan_metrics = process_comparison(
                 meal_file, leave_lookup, target_month, meal_prices
             )
-            st.write(f"✅ 共讀取 {scan_metrics['processed_sheets']} 個工作表，掃描 {scan_metrics['checked_meal_entries']} 筆點餐紀錄")
+            
+            # 顯示偵測結果
+            processed_count = len(scan_metrics['processed_sheets'])
+            st.write(f"✅ 成功辨識並比對 **{processed_count}** 個部門工作表: {', '.join(scan_metrics['processed_sheets'])}")
+            
+            if scan_metrics['skipped_sheets']:
+                st.info(f"ℹ️ 略過了 {len(scan_metrics['skipped_sheets'])} 個非點餐格式的工作表: {', '.join(scan_metrics['skipped_sheets'])}")
+                
+            st.write(f"✅ 總計掃描了 {scan_metrics['checked_meal_entries']} 筆點餐紀錄")
             status.update(label="比對作業完成！", state="complete", expanded=False)
             
         # 顯示結果與下載
@@ -112,8 +121,13 @@ def main():
             # DataFrame 排序格式化
             meal_order = {'早': 1, '中': 2, '晚': 3}
             df_final['rank'] = df_final['餐別'].str[0].map(lambda x: meal_order.get(x, 9))
-            df_final['組別_rank'] = df_final['組別'].map(lambda x: (0, int(re.search(r'\d+', x).group())) if re.search(r'\d+', x) else (1, 0))
+            
+            # [更新] 動態排序邏輯：讓包含數字的(1組, 2組)照順序排，沒數字的(行政室)按筆畫/字母排在後面
+            df_final['組別_rank'] = df_final['組別'].map(
+                lambda x: (0, int(re.search(r'\d+', x).group()), x) if re.search(r'\d+', x) else (1, 0, x)
+            )
             df_final['日期_rank'] = df_final['日期'].map(lambda x: int(re.search(r'月(\d+)日', x).group(1)) if re.search(r'月(\d+)日', x) else 0)
+            
             df_final = df_final.sort_values(by=['組別_rank', '日期_rank', '姓名', 'rank']).drop(columns=['rank', '組別_rank', '日期_rank'])
             
             st.success(f"✅ 比對完成！偵測到 **{len(df_final)}** 筆異常。")
@@ -138,7 +152,7 @@ def main():
             elif leave_count == 0 and not (found_months and target_month not in found_months):
                 st.warning(f"⚠️ 掃描完成，但**未載入任何 {target_month} 月的有效差假紀錄**。若無人請假請忽略此訊息。")
             elif scan_metrics['checked_meal_entries'] > 0 and leave_count > 0:
-                st.success(f"✨ 掃描完成！本次共深入檢查了 **{scan_metrics['processed_sheets']}** 個工作表，未發現任何異常狀況！")
+                st.success(f"✨ 掃描完成！本次共深入檢查了 **{len(scan_metrics['processed_sheets'])}** 個工作表，未發現任何異常狀況！")
                 st.balloons()
             elif st.session_state.get('has_warning', False):
                 st.info("ℹ️ 掃描結束。因發生上述警告，部分資料未能完整比對。請修正錯誤後重新執行。")
