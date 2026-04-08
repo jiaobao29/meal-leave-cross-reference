@@ -17,7 +17,6 @@ from schema import (
 # 常數設定區
 # ==========================================
 MEAL_CHECKPOINTS = {'早': 7, '中': 12, '晚': 17}
-TARGET_SHEETS =[f"{i}組" for i in range(1, 10)] + ["日照"]
 
 # ==========================================
 # 工具函式
@@ -113,41 +112,38 @@ def get_leave_lookup_table(leave_files, target_year, target_month, min_leave_day
     return leave_set, parsed_leave_count, found_months
 
 def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
-    """比對點餐表並產出異常清單"""
-    metrics = {'processed_sheets': 0, 'checked_meal_entries': 0}
-    if not meal_file: return[], metrics
+    """比對點餐表並產出異常清單 (動態偵測 Sheet)"""
+    # 更改 metrics 結構，用陣列記錄成功處理與略過的 Sheet
+    metrics = {'processed_sheets': [], 'skipped_sheets': [], 'checked_meal_entries': 0}
+    if not meal_file: return [], metrics
     
-    results =[]
+    results = []
     try:
         excel = pd.ExcelFile(meal_file)
+        all_sheets = excel.sheet_names
     except Exception as e:
         st.error(f"⚠️ 無法讀取點餐系統檔案: {e}")
         st.session_state['has_warning'] = True
-        return[], metrics
+        return [], metrics
 
-    for sheet in TARGET_SHEETS:
-        if sheet not in excel.sheet_names: continue
-        
+    # 動態掃描所有 Sheet
+    for sheet in all_sheets:
         try:
+            # 預設跳過前兩行 (header=2) 以符合格式
             df = pd.read_excel(meal_file, sheet_name=sheet, header=2)
             df.columns = [str(c).strip() for c in df.columns]
 
-            # 驗證點餐檔案必要欄位 ("姓名", "餐別")
-            is_valid, missing_cols = validate_meal_schema(df.columns)
-            if not is_valid:
-                st.warning(f"⚠️ 工作表 '{sheet}' 缺少必要欄位，已略過該表。")
-                st.session_state['has_warning'] = True
-                continue
-
-            # 驗證是否包含日期欄位 (1-31)
-            has_days, day_cols_found = validate_meal_days(df.columns)
-            if not has_days:
-                st.warning(f"⚠️ 工作表 '{sheet}' 找不到日期欄(1–31)，已略過該表。")
-                st.session_state['has_warning'] = True
+            # 驗證必要欄位與日期欄位
+            is_valid, _ = validate_meal_schema(df.columns)
+            has_days, _ = validate_meal_days(df.columns)
+            
+            # 如果不符合格式 (例如工作表是「說明頁」)，默默紀錄並略過
+            if not is_valid or not has_days:
+                metrics['skipped_sheets'].append(sheet)
                 continue
                 
-            metrics['processed_sheets'] += 1
-            # 替換為 Schema 中定義的常數
+            # 通過驗證，列入處理名單
+            metrics['processed_sheets'].append(sheet)
             df[COL_MEAL_NAME] = df[COL_MEAL_NAME].replace('nan', None).ffill()
 
             for _, row in df.iterrows():
@@ -160,7 +156,6 @@ def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
                     day_col = str(day)
                     if day_col in df.columns:
                         val = unicodedata.normalize('NFKC', str(row[day_col])).upper().strip()
-                        # 替換為 Schema 中定義的常數
                         if val in VALID_MEAL_MARKS:
                             metrics['checked_meal_entries'] += 1
                             if (name, day, meal_key) in leave_lookup:
@@ -174,7 +169,9 @@ def process_comparison(meal_file, leave_lookup, target_month, meal_prices):
                                     "異常說明": "請假期間仍有訂餐"
                                 })
         except Exception as e:
+            # 如果是意外報錯才發出警告
             st.warning(f"⚠️ 處理工作表 '{sheet}' 時發生錯誤: {e}")
             st.session_state['has_warning'] = True
+            metrics['skipped_sheets'].append(sheet)
 
     return results, metrics
