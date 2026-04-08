@@ -1,4 +1,3 @@
-```
 # 🍱 人事室專用：點餐與差假交叉比對系統 (Meal-Leave Audit Tool)
 
 > **🤖 AI Developer Context Note:**
@@ -71,4 +70,3 @@ streamlit run app.py
 *   **v1.0**: 初始腳本版本。
 *   **v1.1**: 導入 MVC 架構，分離 `schema.py`，解決欄位寫死導致容易崩潰的問題。
 *   **v1.2 (Current)**: 實作 **動態工作表偵測 (Dynamic Sheet Detection)**，移除硬編碼的 `TARGET_SHEETS`，支援任意名稱之部門 (如行政室、人事室)，並優化混合字串排序與靜默過濾防呆機制。
-```
