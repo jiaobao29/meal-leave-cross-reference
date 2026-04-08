@@ -28,7 +28,7 @@ def main():
     </style>
     """, unsafe_allow_html=True)
 
-    st.title("🍱 點餐與差假交叉比對工具")
+    st.title("🍱 人事室 點餐與差假交叉比對工具")
     st.markdown("""
     <div class="instruction-box">
         <b>💡 操作說明：</b><br>
